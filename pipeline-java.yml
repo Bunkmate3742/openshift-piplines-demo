@@ -1,0 +1,98 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline-demo-java
+spec:
+  params:
+    - name: GIT_REPO
+      type: string
+
+    - name: GIT_REVISION
+      type: string
+
+  workspaces:
+    - name: source
+    - name: sonarscanner-api-token
+    - name: emptyDir
+
+  tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: url
+          value: $(params.GIT_REPO)
+
+        - name: revision
+          value: $(params.GIT_REVISION)
+
+        - name: deleteExisting
+          value: "true"
+
+    - name: build-java-app
+      runAfter:
+        - fetch-repository
+      taskRef:
+        name: maven
+        kind: ClusterTask
+      workspaces:
+        - name: source
+          workspace: source
+
+        - name: maven-settings
+          workspace: emptyDir
+      params:
+        - name: GOALS
+          value:
+            - package
+            - -DskipTests=true
+
+
+    - name: sonarscanner-java-run
+      runAfter:
+        - build-java-app
+      workspaces:
+        - name: source
+        - name: sonarscanner-api-token
+      taskSpec:
+        workspaces:
+          - name: source
+            mountPath: /usr/src
+
+          - name: sonarscanner-api-token
+        steps:
+          - name: sonarscanner-java-run
+            image: "sonarsource/sonar-scanner-cli"
+            env:
+              - name: SONAR_HOST_URL
+                value: http://35.192.202.202:9000
+
+              - name: SONAR_SCANNER_OPTS
+                value: -Dsonar.projectKey=calc-cache -Dsonar.java.binaries=target
+
+              - name: SONAR_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: sonarqube-api-token-calc-cache
+                    key: token
+
+
+    - name: push-image
+      runAfter:
+        - sonarscanner-java-run
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: IMAGE
+          value: image-registry.openshift-image-registry.svc:5000/demo-pipelines/microservice-java
+
+        - name: DOCKERFILE
+          value: src/main/docker/Dockerfile.jvm

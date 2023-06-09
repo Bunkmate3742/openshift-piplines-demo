@@ -1,0 +1,68 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline-demo-dotnet
+spec:
+  params:
+    - name: GIT_REPO
+      type: string
+    - name: GIT_REVISION
+      type: string
+  workspaces:
+    - name: source
+    - name: sonarqube-api-token
+  tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: url
+          value: $(params.GIT_REPO)
+        - name: revision
+          value: $(params.GIT_REVISION)
+        - name: deleteExisting
+          value: "true"
+
+    - name: sonarqube-run-dotnet
+      runAfter:
+        - fetch-repository
+      workspaces:
+        - name: source
+        - name: sonarqube-api-token
+      taskSpec:
+        workspaces:
+          - name: source
+
+          - name: sonarqube-api-token
+        steps:
+          - name: sonarqube-run-dotnet-task
+            image: quay.io/rh_ee_andsmith/sonarscanner
+            # securityContext:
+              # runAsUser: 65532 
+            script: |
+              #!/usr/bin/env bash
+              API_KEY=$(cat /workspace/sonarqube-api-token/token)
+              cd /workspace/source/
+              dotnet clean
+              dotnet sonarscanner begin /k:"calc" /d:sonar.host.url="http://35.192.202.202:9000" /d:sonar.login="${API_KEY}"
+              dotnet build
+              dotnet sonarscanner end /d:sonar.login="${API_KEY}"
+              dotnet publish
+
+            
+    - name: push-image
+      runAfter:
+        - sonarqube-run-dotnet
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: IMAGE
+          value: image-registry.openshift-image-registry.svc:5000/demo-pipelines/microservice-dotnet

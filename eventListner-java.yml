@@ -1,0 +1,43 @@
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: EventListener
+metadata:
+  name: github-push
+  namespace: demo-pipelines
+spec:
+  serviceAccountName: pipeline
+  triggers:
+    - name: pushTrigger
+      template:
+        spec:
+          resourceTemplates:
+            - apiVersion: tekton.dev/v1beta1
+              kind: PipelineRun
+              metadata:
+                generateName: pipeline-demo-java-run-
+              spec:
+                pipelineRef:
+                  name: pipeline-demo-java
+                params:
+                  - name: GIT_REPO
+                    value: https://github.com/Bunkmate3742/calc-cache
+
+                  - name: GIT_REVISION
+                    value: main
+                workspaces:
+                  - name: source
+                    volumeClaimTemplate:
+                      spec:
+                        accessModes:
+                          - ReadWriteOnce
+                        resources:
+                          requests:
+                            storage: 1Gi
+                        storageClassName: gp3-csi
+                        volumeMode: Filesystem
+
+                  - name: sonarscanner-api-token
+                    secret:
+                      secretName: sonarqube-api-token-calc-cache
+                  - name: emptyDir
+                    emptyDir: {}
+
